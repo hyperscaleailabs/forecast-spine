@@ -158,9 +158,18 @@ class RateLimiter:
         self.requests_per_minute = requests_per_minute
         self._sent: deque[float] = deque()
 
-    def acquire(self, *, now: float | None = None, sleep=time.sleep) -> float:
-        """Block until another request is allowed. Returns seconds waited."""
-        current = time.monotonic() if now is None else now
+    def acquire(
+        self, *, now: float | None = None, sleep=time.sleep, clock=time.monotonic
+    ) -> float:
+        """Block until another request is allowed. Returns seconds waited.
+
+        `clock` is injected so the throughput of the live path can be tested.
+        Re-reading it after sleeping matters: adding the pause to a freshly
+        read clock instead double-counts it, which pushes recorded timestamps
+        into the future, stops the window draining, and compounds into a
+        throttle several times tighter than the configured rate.
+        """
+        current = clock() if now is None else now
         waited = 0.0
         while True:
             while self._sent and current - self._sent[0] >= 60.0:
@@ -171,7 +180,7 @@ class RateLimiter:
             pause = 60.0 - (current - self._sent[0]) + 0.01
             sleep(pause)
             waited += pause
-            current = (time.monotonic() if now is None else current) + pause
+            current = clock() if now is None else current + pause
 
 
 @dataclasses.dataclass

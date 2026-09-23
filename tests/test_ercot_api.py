@@ -304,3 +304,55 @@ def test_a_colliding_vintage_is_kept_rather_than_dropped(tmp_path):
     assert {p.read_bytes() for p in on_disk} == {first.read_bytes(), second.read_bytes()}
     # Both parse to the same publication timestamp, which is what the gate sees.
     assert len({ercot.parse_publication_ts(p.name) for p in on_disk}) == 1
+
+
+class _SimulatedClock:
+    """A monotonic clock that only advances when something sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_live_path_actually_achieves_the_configured_rate():
+    """Regression: the limiter once throttled ~4x tighter than configured.
+
+    Re-reading the clock after sleeping is not the same as adding the pause to
+    it. The latter double-counts, so every recorded timestamp drifts further
+    into the future, the 60-second window stops draining, and throughput
+    collapses. A rate limiter that is merely "safe" is a bug too -- this pins
+    the floor as well as the ceiling.
+    """
+    clock = _SimulatedClock()
+    limiter = ercot_api.RateLimiter(requests_per_minute=24)
+
+    # The drift only bites from the *second* throttle onward, so a single
+    # window would not have caught this. 144 requests spans six.
+    for _ in range(144):
+        limiter.acquire(sleep=clock.sleep, clock=clock)
+        clock.now += 0.01  # each request takes a moment of wall time
+
+    # 144 requests at 24/min: a free opening burst then five ~60s waits.
+    # The old implementation took 898s here and kept getting worse.
+    assert 280.0 <= clock.now <= 340.0, f"144 requests took {clock.now:.1f}s at 24/min"
+
+
+def test_limiter_never_exceeds_the_rate_over_a_long_run():
+    """The ceiling still holds: no 60-second window ever contains more than N."""
+    clock = _SimulatedClock()
+    limiter = ercot_api.RateLimiter(requests_per_minute=10)
+    stamps = []
+
+    for _ in range(60):
+        limiter.acquire(sleep=clock.sleep, clock=clock)
+        stamps.append(clock.now)
+        clock.now += 0.001
+
+    for index, start in enumerate(stamps):
+        in_window = [s for s in stamps[index:] if s - start < 60.0]
+        assert len(in_window) <= 10, f"{len(in_window)} requests within 60s of {start:.2f}"
