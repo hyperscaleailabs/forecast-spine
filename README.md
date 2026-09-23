@@ -31,6 +31,9 @@ uv run forecast-spine demo
 uv run pytest -q
 ```
 
+The charts live in [`notebooks/exploration.ipynb`](notebooks/exploration.ipynb),
+committed with its outputs so it reads on GitHub without being run.
+
 To use real ERCOT data (public MIS listing, no credentials required):
 
 ```bash
@@ -43,6 +46,10 @@ uv run forecast-spine run --processing-date 2026-09-23
 
 ```bash
 uv run python scripts/evidence.py
+```
+
+```bash
+uv run jupyter nbconvert --to notebook --execute --inplace notebooks/exploration.ipynb
 ```
 
 `run` exits **0** when both gates pass, **1** on data-readiness failure and
@@ -154,7 +161,9 @@ src/forecast_spine/
     seasonal_naive.py         WAPE, rolling-origin folds, peak-hour diagnostics
     gates.py                  the two executable gates
     fixtures.py               synthetic credential-free scenarios
+    viz.py                    chart chrome: validated palette, axes, labels
     cli.py                    acquire / run / demo
+notebooks/exploration.ipynb   the point-in-time story, in nine charts
 tests/
     test_asof_join.py         cutoff boundaries, latest-eligible, no back-fill
     test_dst.py               23/24/25-hour days, repeated hour, 167-hour lag
@@ -166,6 +175,21 @@ scripts/evidence.py           regenerates every factual claim in MEMO.md
 
 `data/raw/` (immutable vintages) and `data/warehouse/` are gitignored; the
 pipeline rebuilds them.
+
+## Charts
+
+`notebooks/exploration.ipynb` is the visual argument, not decoration. The two
+that carry it:
+
+- **the vintage landscape** — every forecast ever published for a zone, plotted
+  against what it forecasts, with the `T − 24h` frontier drawn through it;
+- **the cost of hindsight** — relax one predicate to take the latest vintage
+  instead of the as-of one, and ERCOT's model scores **1.13%** instead of
+  **2.92%**. Nothing errors, no row goes missing, every chart still renders.
+  The model just looks 2.6x better than it was at decision time.
+
+That second number is the whole exercise in one figure: the failure mode is not
+a crash, it is a plausible number.
 
 ## Configuration
 
