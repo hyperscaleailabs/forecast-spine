@@ -17,6 +17,7 @@ notebook = [
     "matplotlib>=3.9",
     "pandas>=2.2",
     "jupyter>=1.1",
+    "jupyterlab>=4.2",
     "nbconvert>=7.16",
 ]
 

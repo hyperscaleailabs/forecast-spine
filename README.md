@@ -17,8 +17,18 @@ measured evidence; this file is how to run it.
 
 ## Quick start
 
+One command installs everything and opens the notebook in JupyterLab:
+
 ```bash
-uv venv --python 3.12 && uv pip install -e ".[dev]"
+./scripts/lab.sh
+```
+
+Add `--acquire` to download real ERCOT vintages first (~12 MB, no
+credentials), or `--install-only` to set the environment up without launching
+anything. It is safe to re-run. To do it by hand instead:
+
+```bash
+uv venv --python 3.12 && uv pip install -e ".[dev,notebook]"
 ```
 
 Everything below runs from synthetic fixtures — no credentials, no network:
@@ -171,6 +181,7 @@ tests/
     test_rerun.py             determinism, partition replace, archive drift
     test_gates.py             all five scenarios, tampering, tightened threshold
 scripts/evidence.py           regenerates every factual claim in MEMO.md
+scripts/lab.sh                install deps and open the notebook
 ```
 
 `data/raw/` (immutable vintages) and `data/warehouse/` are gitignored; the
