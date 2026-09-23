@@ -125,17 +125,26 @@ def run(
     sql: Path = typer.Option(DEFAULT_SQL),
     reports_dir: Path = typer.Option(DEFAULT_REPORTS),
     window_days: int = typer.Option(pipeline.DEFAULT_WINDOW_DAYS),
+    window_start: str = typer.Option("", help="First operating day to evaluate, YYYY-MM-DD."),
+    window_end: str = typer.Option("", help="Last operating day to evaluate, YYYY-MM-DD."),
     cutoff_lag_hours: int = typer.Option(pipeline.DEFAULT_CUTOFF_LAG_HOURS),
 ) -> None:
-    """Build the warehouse for a processing date and run both gates."""
+    """Build the warehouse for a processing date and run both gates.
+
+    The window defaults to the last `--window-days` complete operating days.
+    Pass `--window-start` / `--window-end` to evaluate a named date range.
+    """
     date = dt.date.fromisoformat(processing_date)
+    start = dt.date.fromisoformat(window_start) if window_start else None
+    end = dt.date.fromisoformat(window_end) if window_end else None
     temporary: Path | None = None
     if source == "fixtures":
         temporary = Path(tempfile.mkdtemp(prefix="forecast-spine-fixtures-"))
         raw_dir = fixtures.build(scenario, temporary)
         window_days = 1
     try:
-        code = _execute(date, raw_dir, database, sql, reports_dir, window_days, cutoff_lag_hours)
+        code = _execute(date, raw_dir, database, sql, reports_dir, window_days,
+                        cutoff_lag_hours, start, end)
     finally:
         if temporary is not None:
             shutil.rmtree(temporary, ignore_errors=True)
@@ -150,11 +159,18 @@ def _execute(
     reports_dir: Path,
     window_days: int,
     cutoff_lag_hours: int,
+    window_start: dt.date | None = None,
+    window_end: dt.date | None = None,
 ) -> int:
     started = time.monotonic()
-    context = pipeline.build_context(
-        date, raw_dir, cutoff_lag_hours=cutoff_lag_hours, window_days=window_days
-    )
+    try:
+        context = pipeline.build_context(
+            date, raw_dir, cutoff_lag_hours=cutoff_lag_hours, window_days=window_days,
+            window_start=window_start, window_end=window_end,
+        )
+    except ValueError as error:
+        _echo(str(error))
+        return EXIT_READINESS_FAILED
     if not context.source_files:
         _echo(f"no source files published on or before {date} under {raw_dir}")
         return EXIT_READINESS_FAILED

@@ -147,6 +147,8 @@ def build_context(
     cutoff_lag_hours: int = DEFAULT_CUTOFF_LAG_HOURS,
     seasonal_lag_days: int = DEFAULT_SEASONAL_LAG_DAYS,
     window_days: int = DEFAULT_WINDOW_DAYS,
+    window_start: dt.date | None = None,
+    window_end: dt.date | None = None,
 ) -> RunContext:
     processing_ts = processing_cutoff(processing_date)
 
@@ -157,12 +159,20 @@ def build_context(
         if source.publication_ts_utc < processing_ts
     )
 
-    # Evaluation window: the `window_days` complete operating days ending the
-    # day before the processing date. Actuals for operating day D are
-    # published on D+1, so D = processing_date - 1 is the newest day that can
-    # have a complete set of actuals.
-    last_day = processing_date - dt.timedelta(days=1)
-    first_day = last_day - dt.timedelta(days=window_days - 1)
+    # Evaluation window. By default the `window_days` complete operating days
+    # ending the day before the processing date: actuals for operating day D
+    # are published on D+1, so D = processing_date - 1 is the newest day that
+    # can have a complete set of actuals. An assignment usually names a date
+    # range instead, so explicit bounds override the count.
+    last_day = window_end or (processing_date - dt.timedelta(days=1))
+    first_day = window_start or (last_day - dt.timedelta(days=window_days - 1))
+    if first_day > last_day:
+        raise ValueError(f"evaluation window starts after it ends: {first_day} .. {last_day}")
+    if last_day >= processing_date:
+        raise ValueError(
+            f"evaluation window ends {last_day}, on or after the processing date "
+            f"{processing_date}; actuals for that day are not published until the next morning"
+        )
     window_start = dt.datetime.combine(first_day, dt.time()).replace(tzinfo=CENTRAL).astimezone(UTC)
     window_end = (
         dt.datetime.combine(last_day + dt.timedelta(days=1), dt.time())

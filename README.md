@@ -214,7 +214,22 @@ than the public listing's ~7-day retention.
 
 ```bash
 cp .env.example .env     # .env is gitignored
-uv run forecast-spine backfill --from 2026-03-06 --to 2026-03-16
+
+# NP3-565 publications posted 21 Feb 00:00 - 23 Mar 23:59 CPT
+uv run forecast-spine backfill --report load_forecast \
+    --from 2026-02-21 --to 2026-03-23 --requests-per-minute 28
+
+# NP6-345 actuals covering target days 22 Feb - 23 Mar, plus the seven-day
+# seasonal-naive lookback before the first target day
+uv run forecast-spine backfill --report actual_load \
+    --from 2026-02-16 --to 2026-03-24 --requests-per-minute 28
+```
+
+Then evaluate the named range rather than a day count:
+
+```bash
+uv run forecast-spine run --processing-date 2026-03-24 \
+    --window-start 2026-02-22 --window-end 2026-03-23
 ```
 
 It requires **two** credentials, which is easy to get wrong. An API Explorer
