@@ -21,6 +21,7 @@ from pathlib import Path
 
 import typer
 
+from . import coverage as coverage_module
 from . import ercot, ercot_api, fixtures, gates, pipeline
 
 app = typer.Typer(add_completion=False, help="Point-in-time ERCOT load forecast evaluation.")
@@ -113,6 +114,34 @@ def backfill(
             _echo(f"  {key}: FAILED — {error}")
             raise typer.Exit(1) from None
         _echo(f"  {key}: {len(written)} vintages on disk for this range")
+
+
+@app.command()
+def coverage(
+    from_date: str = typer.Option(..., "--from", help="YYYY-MM-DD, inclusive."),
+    to_date: str = typer.Option(..., "--to", help="YYYY-MM-DD, inclusive."),
+    report: str = typer.Option("all", help="all | load_forecast | actual_load"),
+    raw_dir: Path = typer.Option(DEFAULT_RAW),
+    list_missing: int = typer.Option(0, help="Also print the first N missing publication hours."),
+) -> None:
+    """Report which expected publications are on disk and which are not.
+
+    Answers "what could and could not be retrieved" from the files themselves
+    rather than from memory. Exits non-zero when anything expected is absent.
+    """
+    start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
+    keys = list(ercot.REPORTS) if report == "all" else [report]
+    incomplete = False
+    for key in keys:
+        result = coverage_module.measure(key, start, end, raw_dir)
+        _echo(result.summary())
+        if list_missing and result.missing_hours:
+            for moment in result.missing_hours[:list_missing]:
+                _echo(f"      missing {moment:%Y-%m-%d %H:%M %Z}")
+            if len(result.missing_hours) > list_missing:
+                _echo(f"      ... and {len(result.missing_hours) - list_missing} more")
+        incomplete = incomplete or not result.complete
+    raise typer.Exit(1 if incomplete else 0)
 
 
 @app.command()
