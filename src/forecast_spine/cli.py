@@ -1,6 +1,7 @@
 """Command line entry points.
 
     forecast-spine acquire                      # download MIS vintages
+    forecast-spine backfill --from D --to D     # archived vintages (needs login)
     forecast-spine run --processing-date DATE   # build + gate a run
     forecast-spine demo                         # every fixture scenario
 
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import typer
 
-from . import ercot, fixtures, gates, pipeline
+from . import ercot, ercot_api, fixtures, gates, pipeline
 
 app = typer.Typer(add_completion=False, help="Point-in-time ERCOT load forecast evaluation.")
 
@@ -61,6 +62,57 @@ def acquire(
                 fetched += 1
                 time.sleep(delay)
         _echo(f"  fetched {fetched}, already held {held}")
+
+
+@app.command()
+def backfill(
+    from_date: str = typer.Option(..., "--from", help="YYYY-MM-DD, inclusive."),
+    to_date: str = typer.Option(..., "--to", help="YYYY-MM-DD, inclusive."),
+    report: str = typer.Option("all", help="all | load_forecast | actual_load"),
+    raw_dir: Path = typer.Option(DEFAULT_RAW),
+    requests_per_minute: int = typer.Option(
+        ercot_api.DEFAULT_REQUESTS_PER_MINUTE,
+        help=f"Capped at ERCOT's documented {ercot_api.DOCUMENTED_REQUESTS_PER_MINUTE}/min.",
+    ),
+    env_file: Path = typer.Option(Path(".env"), help="Gitignored file holding credentials."),
+) -> None:
+    """Download archived vintages from the authenticated ERCOT Public API.
+
+    Unlike `acquire`, this needs credentials: a subscription key *and* the
+    ERCOT account login that mints the bearer token. Files land in the same
+    layout `acquire` uses, so `run` consumes them without knowing which
+    source fetched them.
+    """
+    start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
+    if start > end:
+        _echo(f"--from {start} is after --to {end}")
+        raise typer.Exit(2)
+
+    try:
+        credentials = ercot_api.Credentials.from_env(env_file)
+    except ercot_api.CredentialsMissing as missing:
+        _echo(str(missing))
+        raise typer.Exit(2) from None
+
+    client = ercot_api.ErcotApiClient(credentials, requests_per_minute=requests_per_minute)
+    keys = list(ercot.REPORTS) if report == "all" else [report]
+    _echo(
+        f"Backfilling {', '.join(keys)} for {start} .. {end} "
+        f"at up to {requests_per_minute} requests/min"
+    )
+
+    for key in keys:
+        def progress(entry, total, _key=key):
+            _echo(f"  {_key}: {total} files · newest {entry.post_datetime_utc:%Y-%m-%d %H:%M} UTC")
+
+        try:
+            written = ercot_api.backfill(
+                key, start, end, raw_dir, client=client, on_progress=progress
+            )
+        except ercot_api.ErcotApiError as error:
+            _echo(f"  {key}: FAILED — {error}")
+            raise typer.Exit(1) from None
+        _echo(f"  {key}: {len(written)} vintages on disk for this range")
 
 
 @app.command()

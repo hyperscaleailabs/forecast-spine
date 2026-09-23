@@ -13,3 +13,4 @@ build/
 *.egg-info/
 .DS_Store
 data/reports/
+.ipynb_checkpoints/

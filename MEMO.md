@@ -20,6 +20,21 @@ window crossing the March 2026 spring-forward transition. I did not fabricate
 the earlier period or substitute today's files for it — that would be exactly
 the hindsight this pipeline exists to prevent.
 
+**Status of the backfill.** The authenticated archive client is built and
+tested (`src/forecast_spine/ercot_api.py`, `forecast-spine backfill`), and an
+API Explorer subscription key is in hand. It is still blocked on one thing:
+the Public API needs **two** credentials, not one. Every endpoint answers
+
+    401 {"message": "Unauthorized. Access token is missing or invalid."}
+
+with a valid subscription key alone, because it also wants an
+`Authorization: Bearer <id_token>` minted by ERCOT's Azure B2C
+resource-owner flow from the **ercot.com account username and password**.
+That the flow and client id are right was confirmed by probing: a deliberately
+invalid login reaches credential validation and returns `AADB2C90225`, rather
+than a 404 or a malformed-request error. Supply `ERCOT_USERNAME` and
+`ERCOT_PASSWORD` in `.env` and the March window is one command away.
+
 DST is therefore handled in two places instead: the transition logic is
 isolated in `src/forecast_spine/time.py`, and both transitions are covered by
 synthetic fixtures and tests, including an end-to-end run over a 23-hour
@@ -339,8 +354,12 @@ is being graded, and what actually breaks in production.
 
 What I would do next, given more time or credentials:
 
-1. Backfill March 2026 from the authenticated archive and run the real
-   spring-forward window end to end.
+1. Backfill March 2026 and run the real spring-forward window end to end. The
+   client is written and tested; it needs the account login described in §0.
+   Note that one thing the live path cannot be tested for until then is the
+   shape of the archive payload — `unpack_archive_payload` handles both a bare
+   CDR zip and a zip-of-zips, and raises loudly on anything else rather than
+   skipping it.
 2. Confirm `DSTFlag` semantics against a November vintage.
 3. Peak-MW and bias guardrails as above; thresholds from a year of backtest.
 4. Quarantine triage: today any quarantined row blocks release, which is right

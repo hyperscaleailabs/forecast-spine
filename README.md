@@ -165,6 +165,7 @@ there because its vintages are what the point-in-time machinery is built on.
 sql/asof_join.sql             the as-of selection; the heart of the submission
 src/forecast_spine/
     ercot.py                  MIS listing, immutable content-addressed download
+    ercot_api.py              authenticated archive client, rate-limited
     time.py                   operating dates, hours ending, DST, DSTFlag
     normalize.py              wide CSV -> long rows, one disposition per row
     pipeline.py               run_id, warehouse schema, idempotent load
@@ -180,6 +181,7 @@ tests/
     test_accounting.py        row ledger invariant, the zone-order trap
     test_rerun.py             determinism, partition replace, archive drift
     test_gates.py             all five scenarios, tampering, tightened threshold
+    test_ercot_api.py         rate limiter, payload shapes, MIS-compatibility
 scripts/evidence.py           regenerates every factual claim in MEMO.md
 scripts/lab.sh                install deps and open the notebook
 ```
@@ -202,8 +204,26 @@ that carry it:
 That second number is the whole exercise in one figure: the failure mode is not
 a crash, it is a plausible number.
 
-## Configuration
+## Credentials
 
-Live acquisition uses only the public MIS endpoint. No credentials are read
-from anywhere, and fixtures are generated in-process, so nothing in this repo
-depends on a secret.
+**The default path needs none.** `acquire`, `run`, `demo`, the notebook and
+the whole test suite use only the public MIS endpoint and in-process fixtures.
+
+One command needs credentials: `backfill`, which reads archived vintages older
+than the public listing's ~7-day retention.
+
+```bash
+cp .env.example .env     # .env is gitignored
+uv run forecast-spine backfill --from 2026-03-06 --to 2026-03-16
+```
+
+It requires **two** credentials, which is easy to get wrong. An API Explorer
+subscription key alone returns `401 Unauthorized. Access token is missing or
+invalid.` on every endpoint — the ercot.com account username and password are
+what mint the bearer token. Both live in `.env`; neither is ever logged,
+echoed, or written to the warehouse, and `Credentials.__repr__` redacts them
+so they cannot leak into a traceback or a notebook cell.
+
+Requests are held to a sliding-window limit below ERCOT's documented 30/min
+(default 24), with `Retry-After` honoured on 429 and one silent re-auth on a
+mid-run token expiry.
