@@ -2,36 +2,33 @@
 
 A point-in-time correct evaluation pipeline for ERCOT hourly load forecasts.
 
-The model is a weekly seasonal naive, on purpose. The work is in making
-historical evaluation faithfully represent what could actually have been known
-at decision time.
+The model is a weekly seasonal naive, on purpose. The work is making historical
+evaluation faithfully represent what could actually have been known at decision
+time.
 
-> **Invariant:** nothing used to produce a forecast for target hour `T` may
-> have become available after `T − 24h`.
+> **Invariant:** nothing used to produce a forecast for target hour `T` may have
+> become available after `T − 24h`.
 
 It is enforced in the schema, the SQL, the model inputs, the tests and the
-release gates — not just stated here. `MEMO.md` has the reasoning and the
-measured evidence; this file is how to run it.
+release gates — not just stated here.
+
+- [`MEMO.md`](MEMO.md) — the reasoning, the measured evidence, and what would
+  still get past these gates.
+- [`RETRIEVAL.md`](RETRIEVAL.md) — what was and was not retrieved, generated
+  from the files on disk.
+- [`notebooks/exploration.ipynb`](notebooks/exploration.ipynb) — the same
+  argument as figures, committed with outputs so it reads on GitHub.
 
 ---
 
-## Quick start
+## Run it
 
-One command installs everything and opens the notebook in JupyterLab:
-
-```bash
-./scripts/lab.sh
-```
-
-Add `--acquire` to download real ERCOT vintages first (~12 MB, no
-credentials), or `--install-only` to set the environment up without launching
-anything. It is safe to re-run. To do it by hand instead:
+Nothing below needs credentials or a network. This is the fastest way to see
+the whole thing work:
 
 ```bash
-uv venv --python 3.12 && uv pip install -e ".[dev,notebook]"
+./scripts/lab.sh --install-only
 ```
-
-Everything below runs from synthetic fixtures — no credentials, no network:
 
 ```bash
 uv run forecast-spine demo
@@ -41,121 +38,114 @@ uv run forecast-spine demo
 uv run pytest -q
 ```
 
-The charts live in [`notebooks/exploration.ipynb`](notebooks/exploration.ipynb),
-committed with its outputs so it reads on GitHub without being run.
+`demo` builds five synthetic scenarios end to end and asserts the verdict each
+one produces — one approval, one 23-hour DST day, and three materially
+different blocks. `scripts/lab.sh` with no arguments also opens the notebook in
+JupyterLab.
 
-To use real ERCOT data (public MIS listing, no credentials required):
+With the public MIS listing (still no credentials — it retains about 7 days):
 
 ```bash
 uv run forecast-spine acquire
-```
-
-```bash
 uv run forecast-spine run --processing-date 2026-09-23
-```
-
-```bash
 uv run python scripts/evidence.py
 ```
 
-```bash
-uv run jupyter nbconvert --to notebook --execute --inplace notebooks/exploration.ipynb
-```
-
-`run` exits **0** when both gates pass, **1** on data-readiness failure and
-**2** on model-gate failure.
+`run` exits **0** when both gates pass, **1** on a data-readiness failure and
+**2** on a model-gate failure.
 
 ---
 
-## What it does
+## The pipeline
 
 ```
-ERCOT MIS listing  (NP3-565-CD forecast, NP6-345-CD actual)
-        |
-        v
-Immutable raw files          filename + publication_ts + SHA256
-        |
-        v
-Normalization                every source row gets a disposition
-        |                    raw = accepted + duplicate + quarantined
-        +--> accepted
-        +--> quarantine + reason_code + raw payload
-        |
-        v
-DuckDB canonical vintages    publication_ts kept separate from target_ts
-        |
-        v
-sql/asof_join.sql            latest publication <= target - 24h
-        |
-        v
-evaluation_dataset
-        |
-        +--> Gate 1: data readiness  --(fail)--> BLOCKED, exit 1
-        |
-        +--> Gate 2: seasonal naive  --(fail)--> BLOCKED, exit 2
-                 |
-                 v
-             APPROVED, exit 0
+ERCOT MIS listing (no credentials)   ERCOT Public API archive (credentials)
+        │                                         │
+        └──────────────┬──────────────────────────┘
+                       ▼
+        Immutable raw files        filename + publication_ts + SHA256
+                       ▼
+        Normalization              every source row gets a disposition
+                       │           raw = accepted + duplicate + quarantined
+                       ├─► accepted
+                       └─► quarantine + reason_code + raw payload
+                       ▼
+        DuckDB canonical vintages  publication_ts kept apart from target_ts
+                       ▼
+        sql/asof_join.sql          latest publication ≤ target − 24h
+                       ▼
+        evaluation_dataset
+                       ├─► Gate 1: data readiness  ──(fail)──► BLOCKED, exit 1
+                       └─► Gate 2: seasonal naive  ──(fail)──► BLOCKED, exit 2
+                                   │
+                                   ▼
+                              APPROVED, exit 0
 ```
 
 Three selections run against three different clocks. The forecast and the
 seasonal-naive *input* are as-of `T − 24h`; the reported actual is as-of the
-processing date, because truth is only known after the hour.
-
-The cutoff is per target hour, not one run timestamp — hour 2 and hour 23 of
-the same day have deadlines 21 hours apart.
+processing date, because truth is only known after the hour. The cutoff is per
+target hour, not one run timestamp — hour 2 and hour 23 of the same day have
+deadlines 21 hours apart.
 
 ---
 
 ## Sources
 
 | | NP3-565-CD | NP6-345-CD |
-|---|---|---|
-| Seven-Day Load Forecast by Model and Weather Zone | reportTypeId 14837 | |
-| Actual System Load by Weather Zone | | reportTypeId 13101 |
-| Cadence *measured from vintages* | every 60 min, at HH:30 CPT | every 1440 min, at 05:50 CPT |
-| Public retention *measured* | 7.2 days | 31.0 days |
-| Revised after publication | yes, 99.7% of target zone-hours | never observed |
+| --- | --- | --- |
+| Report | Seven-Day Load Forecast by Model and Weather Zone | Actual System Load by Weather Zone |
+| reportTypeId | 14837 | 13101 |
+| Cadence, *measured* | every 60 min, at HH:30 CPT | every 1440 min, at 05:50 CPT |
+| Revised after publication | yes — 99.7% of target zone-hours | never observed |
 
-Publication timestamps in MIS filenames are **America/Chicago**, confirmed
-against all 174 forecast vintages rather than assumed — see `MEMO.md §1`.
-
-The 7.2-day retention of the public listing is why the evaluation window is
-2026-09-18 → 2026-09-22 rather than a window crossing spring-forward. DST is
-covered by tests and an end-to-end 23-hour fixture day instead. `MEMO.md §0`.
+MIS filename timestamps are **America/Chicago**, confirmed against every
+vintage held rather than assumed — see [`MEMO.md` §1](MEMO.md). The two reports
+order `SOUTHERN` and `SOUTH_CENTRAL` oppositely, so zones are mapped by name
+and headers are fingerprinted per file.
 
 ---
 
-## Results on real data
+## Credentials
 
-Processing date 2026-09-23, window 2026-09-18 → 2026-09-22, 960 zone-hours.
+**The default path needs none.** `acquire`, `run`, `demo`, the notebook and the
+whole test suite use only the public MIS listing and in-process fixtures.
 
+One command needs credentials: `backfill`, which reads archived vintages older
+than the public listing's ~7-day retention.
+
+```bash
+cp .env.example .env     # .env is gitignored
 ```
-206 source files -> 268,032 source rows -> 268,032 dispositions (all ACCEPTED)
-2,405,376 forecast + 6,912 actual observations
-full rebuild from local files: 8.4s
 
-data_readiness  PASS
-seasonal_naive  PASS   WAPE 6.35%  worst day 7.40%  worst peak-hour APE 16.20%
+It requires **two** credentials, which is easy to get wrong. An API Explorer
+subscription key alone returns `401 Unauthorized. Access token is missing or
+invalid.` on every endpoint — the ercot.com account username and password are
+what mint the bearer token. Neither is ever logged, echoed or written to the
+warehouse, and `Credentials.__repr__` redacts them so they cannot leak into a
+traceback or a notebook cell.
+
+Requests use a sliding-window limiter below ERCOT's documented 30/min, with
+`Retry-After` honoured on 429 and one silent re-auth on mid-run token expiry.
+
+```bash
+# NP3-565 publications posted 21 Feb 00:00 – 23 Mar 23:59 CPT
+uv run forecast-spine backfill --report load_forecast \
+    --from 2026-02-21 --to 2026-03-23 --requests-per-minute 28
+
+# NP6-345 actuals for target days 22 Feb – 23 Mar, plus the seven-day
+# seasonal-naive lookback before the first target day
+uv run forecast-spine backfill --report actual_load \
+    --from 2026-02-16 --to 2026-03-24 --requests-per-minute 28
+
+# What arrived, and what did not
+uv run forecast-spine coverage --from 2026-02-21 --to 2026-03-23
+uv run python scripts/retrieval_report.py --verify
+
+# Evaluate the named range rather than a day count
+uv run forecast-spine run --processing-date 2026-03-24 \
+    --window-start 2026-02-22 --window-end 2026-03-23
 ```
-
-For reference, ERCOT's own in-use model over the same dataset: WAPE 2.92%.
-It is *not* a competing candidate — the exercise asks for one model — it is
-there because its vintages are what the point-in-time machinery is built on.
-
----
-
-## Demonstrated failures
-
-`forecast-spine demo` runs all five scenarios and asserts each verdict:
-
-| Scenario | Verdict | Reason |
-|---|---|---|
-| `pass` | APPROVED | |
-| `dst_spring_forward` | APPROVED | 23-hour operating day, 184 rows |
-| `missing_forecast` | BLOCKED (1) | `MISSING_ASOF_FORECAST` ×8 — the value exists in a later vintage and is not used |
-| `conflicting_duplicate` | BLOCKED (1) | `QUARANTINED_SAME_KEY_DIFFERENT_VALUES` ×2 — no winner is picked |
-| `schema_drift` | BLOCKED (1) | `SCHEMA_DRIFT` — a renamed zone column is refused, not parsed positionally |
 
 ---
 
@@ -166,15 +156,15 @@ sql/asof_join.sql             the as-of selection; the heart of the submission
 src/forecast_spine/
     ercot.py                  MIS listing, immutable content-addressed download
     ercot_api.py              authenticated archive client, rate-limited
+    coverage.py               expected publications vs what is on disk
     time.py                   operating dates, hours ending, DST, DSTFlag
-    normalize.py              wide CSV -> long rows, one disposition per row
+    normalize.py              wide CSV → long rows, one disposition per row
     pipeline.py               run_id, warehouse schema, idempotent load
     seasonal_naive.py         WAPE, rolling-origin folds, peak-hour diagnostics
     gates.py                  the two executable gates
     fixtures.py               synthetic credential-free scenarios
-    viz.py                    chart chrome: validated palette, axes, labels
-    cli.py                    acquire / run / demo
-notebooks/exploration.ipynb   the point-in-time story, in nine charts
+    viz.py                    chart chrome for the notebook
+    cli.py                    acquire / backfill / coverage / run / demo
 tests/
     test_asof_join.py         cutoff boundaries, latest-eligible, no back-fill
     test_dst.py               23/24/25-hour days, repeated hour, 167-hour lag
@@ -182,63 +172,29 @@ tests/
     test_rerun.py             determinism, partition replace, archive drift
     test_gates.py             all five scenarios, tampering, tightened threshold
     test_ercot_api.py         rate limiter, payload shapes, MIS-compatibility
-scripts/evidence.py           regenerates every factual claim in MEMO.md
-scripts/lab.sh                install deps and open the notebook
+    test_coverage.py          DST-aware expected cadence, named gaps
+    test_window.py            explicit date ranges, refused windows
+scripts/
+    lab.sh                    install deps and open the notebook
+    evidence.py               regenerates every factual claim in MEMO.md
+    retrieval_report.py       regenerates RETRIEVAL.md
 ```
 
-`data/raw/` (immutable vintages) and `data/warehouse/` are gitignored; the
-pipeline rebuilds them.
+`data/raw/` (immutable vintages), `data/warehouse/` and `data/reports/` are
+gitignored; the pipeline rebuilds them.
 
-## Charts
+---
 
-`notebooks/exploration.ipynb` is the visual argument, not decoration. The two
-that carry it:
+## What the figures show
+
+Two carry the argument:
 
 - **the vintage landscape** — every forecast ever published for a zone, plotted
   against what it forecasts, with the `T − 24h` frontier drawn through it;
 - **the cost of hindsight** — relax one predicate to take the latest vintage
-  instead of the as-of one, and ERCOT's model scores **1.13%** instead of
-  **2.92%**. Nothing errors, no row goes missing, every chart still renders.
-  The model just looks 2.6x better than it was at decision time.
+  instead of the as-of one, and ERCOT's own model scores **1.13%** instead of
+  **2.92%**. Nothing errors, no row goes missing, every chart still renders. The
+  model just looks 2.6× better than it was at decision time.
 
-That second number is the whole exercise in one figure: the failure mode is not
-a crash, it is a plausible number.
-
-## Credentials
-
-**The default path needs none.** `acquire`, `run`, `demo`, the notebook and
-the whole test suite use only the public MIS endpoint and in-process fixtures.
-
-One command needs credentials: `backfill`, which reads archived vintages older
-than the public listing's ~7-day retention.
-
-```bash
-cp .env.example .env     # .env is gitignored
-
-# NP3-565 publications posted 21 Feb 00:00 - 23 Mar 23:59 CPT
-uv run forecast-spine backfill --report load_forecast \
-    --from 2026-02-21 --to 2026-03-23 --requests-per-minute 28
-
-# NP6-345 actuals covering target days 22 Feb - 23 Mar, plus the seven-day
-# seasonal-naive lookback before the first target day
-uv run forecast-spine backfill --report actual_load \
-    --from 2026-02-16 --to 2026-03-24 --requests-per-minute 28
-```
-
-Then evaluate the named range rather than a day count:
-
-```bash
-uv run forecast-spine run --processing-date 2026-03-24 \
-    --window-start 2026-02-22 --window-end 2026-03-23
-```
-
-It requires **two** credentials, which is easy to get wrong. An API Explorer
-subscription key alone returns `401 Unauthorized. Access token is missing or
-invalid.` on every endpoint — the ercot.com account username and password are
-what mint the bearer token. Both live in `.env`; neither is ever logged,
-echoed, or written to the warehouse, and `Credentials.__repr__` redacts them
-so they cannot leak into a traceback or a notebook cell.
-
-Requests are held to a sliding-window limit below ERCOT's documented 30/min
-(default 24), with `Retry-After` honoured on 429 and one silent re-auth on a
-mid-run token expiry.
+That second number is the exercise in one figure: the failure mode is not a
+crash, it is a plausible number.
