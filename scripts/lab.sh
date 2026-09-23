@@ -60,7 +60,14 @@ if [ "$acquire" -eq 1 ]; then
     "$VENV/bin/forecast-spine" acquire
 fi
 
-vintages=$(find data/raw -name '*_csv.zip' 2>/dev/null | wc -l | tr -d ' ')
+# Guarded rather than piped: under `set -o pipefail` a `find` over a missing
+# data/raw fails the whole pipeline and kills the script right after install.
+if [ -d data/raw ]; then
+    vintages=$(find data/raw -name '*_csv.zip' | wc -l | tr -d ' ')
+else
+    vintages=0
+fi
+
 say "Environment ready"
 if [ "$vintages" -gt 0 ]; then
     echo "  $vintages ERCOT vintages on disk — the notebook will run against live data."
