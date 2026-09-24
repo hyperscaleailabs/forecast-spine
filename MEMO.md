@@ -112,21 +112,15 @@ so both outcomes are reachable.
 
 ## Time and AI use
 
-**Approximate time spent: _[fill in]_.** AI (Claude) was used throughout: SQL
-and normalization drafts, the notebooks, prose, and review of my own claims.
-Three things it got wrong that I caught — all the same shape, confident and
-plausible until checked against the code:
+Approximate time spent: **_[fill in before sending]_**. AI (Claude) was used
+throughout — drafts of the SQL and normalization, the notebooks and prose, and
+as a reviewer of my own claims.
 
-- It stated the error sign convention was documented in `asof_join.sql`'s header.
-  It was not; only the arithmetic existed. Now stated.
-- It reported "11 readiness reason codes" in an architecture diagram. There are
-  **16** — twelve static plus one `QUARANTINED_<disposition>` per quarantine
-  reason.
-- It wrote a README command using `date +%F -d yesterday`, GNU syntax that fails
-  on the macOS this was built on.
-
-The habit that caught all three was the same one the pipeline enforces: derive
-the number from the source rather than from memory.
+One thing it got wrong that I caught: it asserted the error sign convention was
+already documented in `asof_join.sql`'s header. It was not — only the arithmetic
+on one line existed, and Part 1 asks for the convention to be *stated*. What
+found it is the habit this pipeline is built around: check the claim against the
+source instead of trusting a confident summary.
 
 ## What I could not establish, and what I cut
 
