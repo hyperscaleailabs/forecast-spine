@@ -23,36 +23,106 @@ release gates — not just stated here.
 
 ## Run it
 
-Nothing below needs credentials or a network. This is the fastest way to see
-the whole thing work:
+Three paths. The first needs nothing; the third reproduces the assignment.
+
+### 1 · No credentials, no network — the whole system in about a minute
 
 ```bash
-./scripts/lab.sh --install-only
-```
-
-```bash
-uv run forecast-spine demo
-```
-
-```bash
-uv run pytest -q
+./scripts/lab.sh --install-only     # venv + deps, idempotent
+uv run forecast-spine demo          # five scenarios, each verdict asserted
+uv run pytest -q                    # 75 tests
 ```
 
 `demo` builds five synthetic scenarios end to end and asserts the verdict each
-one produces — one approval, one 23-hour DST day, and three materially
-different blocks. `scripts/lab.sh` with no arguments also opens the notebook in
-JupyterLab.
+produces: one approval, one 23-hour DST day, and three materially different
+blocks. It is the proof that **both gate outcomes are reachable**, and it needs
+no credentials, no network and no data on disk.
 
-With the public MIS listing (still no credentials — it retains about 7 days):
+`scripts/lab.sh` with no arguments also opens JupyterLab.
+
+### 2 · The live rolling window — still no credentials
+
+The public MIS listing retains about seven days, so this always evaluates
+roughly *now*:
 
 ```bash
-uv run forecast-spine acquire
-uv run forecast-spine run --processing-date 2026-09-23
+uv run forecast-spine acquire        # ~12 MB, a few minutes
+uv run forecast-spine run --processing-date YYYY-MM-DD   # yesterday's date
 uv run python scripts/evidence.py
 ```
 
-`run` exits **0** when both gates pass, **1** on a data-readiness failure and
-**2** on a model-gate failure.
+Use *yesterday* as the processing date: actuals for operating day D publish on
+D+1, so today's operating day cannot yet be scored. Passing a date on or after
+today is refused with an explanatory error rather than silently evaluating a
+partial day.
+
+### 3 · The assignment window — credentials required
+
+`data/raw/` is gitignored, so a fresh clone holds no vintages. February and
+March 2026 are older than the public listing's retention, which means this path
+needs the authenticated archive. Credentials go in `.env` — see
+[Credentials](#credentials) below; if you already have a populated `.env`,
+start at step 1.
+
+```bash
+# 1. Retrieve. ~30 min total at 28 req/min; idempotent, safe to re-run.
+uv run forecast-spine backfill --report load_forecast \
+    --from 2026-02-21 --to 2026-03-23 --requests-per-minute 28
+uv run forecast-spine backfill --report actual_load \
+    --from 2026-02-16 --to 2026-03-24 --requests-per-minute 28
+
+# 2. Check what arrived before trusting it.
+uv run forecast-spine coverage --from 2026-02-21 --to 2026-03-23
+uv run python scripts/retrieval_report.py --verify
+
+# 3. Evaluate the assignment's named range. ~43s.
+uv run forecast-spine run --processing-date 2026-03-24 \
+    --window-start 2026-02-22 --window-end 2026-03-23
+
+# 4. Regenerate every figure quoted in this README and in MEMO.md.
+uv run python scripts/evidence.py 2026-03-24 \
+    --window-start 2026-02-22 --window-end 2026-03-23
+```
+
+The publication window starts on **21 February**, a day before the first target
+day, because 22 February hour ending 01:00 needs a vintage published before it.
+Actuals start on **16 February** for the seven-day seasonal-naive lookback, and
+end on **24 March** because actuals for operating day D publish on D+1.
+
+**Step 3 is expected to exit non-zero. That is the result, not a failure to
+run.** Abridged — the real output names five sample zone-hours per reason:
+
+```
+run ae80e7096413957c6de9fafe9058c20b  processing_date=2026-03-24  files=775  window=2026-02-22..2026-03-23  evaluation_rows=5752  elapsed=42.6s
+
+[FAIL] data_readiness  -> data/reports/2026-03-24_data_readiness.json
+  MISSING_ASOF_FORECAST (count=8): 8 target zone-hours where no ERCOT forecast was publishable by the cutoff; ...
+  MISSING_NAIVE_INPUT (count=8): 8 target zone-hours where no seasonal-naive input was publishable by the cutoff; ...
+  STALE_FORECAST_VINTAGE (count=16): 16 target zone-hours whose newest publishable forecast was up to 3.5h old at its cutoff (limit 2.0h); ...
+RELEASE BLOCKED: data readiness failed; the model gate was not run.
+```
+
+Three failures, three different causes:
+
+| Reason | Rows | Where | Defect? |
+| --- | --- | --- | --- |
+| `MISSING_ASOF_FORECAST` | 8 | 2026-02-22 HE 1 | **No — structural.** Its cutoff is 2026-02-21 00:00 and publications post at HH:30, so the assignment's own publication window opens 30 minutes too late. |
+| `MISSING_NAIVE_INPUT` | 8 | 2026-03-15 HE 3 | **No — the calendar.** Its week-ago input is 2026-03-08 HE 3, the hour spring-forward deletes. |
+| `STALE_FORECAST_VINTAGE` | 16 | 2026-03-07 HE 13–14 | **Yes — a real gap.** Five publications are absent from 2026-03-06, leaving the newest publishable vintage 2.5h and 3.5h old against a 2h limit. |
+
+The first two are reported rather than papered over: reaching back to a
+20 February vintage would serve HE 1 and would break the stated publication
+window, and imputing 15 March HE 3 would invent a week-over-week comparison
+with no left-hand side. [`MEMO.md`](MEMO.md) argues each one.
+
+Run `demo` to see the same gates approve a release.
+
+`elapsed` is from one laptop run; everything else is deterministic for the same
+inputs. **Close any SQL client holding `data/warehouse/forecast_spine.duckdb`
+first** — DuckDB is single-writer and an open connection will fail the run.
+
+Exit codes: **0** both gates passed · **1** data-readiness failure · **2**
+model-gate failure.
 
 ---
 
@@ -128,24 +198,8 @@ traceback or a notebook cell.
 Requests use a sliding-window limiter below ERCOT's documented 30/min, with
 `Retry-After` honoured on 429 and one silent re-auth on mid-run token expiry.
 
-```bash
-# NP3-565 publications posted 21 Feb 00:00 – 23 Mar 23:59 CPT
-uv run forecast-spine backfill --report load_forecast \
-    --from 2026-02-21 --to 2026-03-23 --requests-per-minute 28
-
-# NP6-345 actuals for target days 22 Feb – 23 Mar, plus the seven-day
-# seasonal-naive lookback before the first target day
-uv run forecast-spine backfill --report actual_load \
-    --from 2026-02-16 --to 2026-03-24 --requests-per-minute 28
-
-# What arrived, and what did not
-uv run forecast-spine coverage --from 2026-02-21 --to 2026-03-23
-uv run python scripts/retrieval_report.py --verify
-
-# Evaluate the named range rather than a day count
-uv run forecast-spine run --processing-date 2026-03-24 \
-    --window-start 2026-02-22 --window-end 2026-03-23
-```
+Already have a populated `.env`? Nothing else to configure — go straight to
+[Run it §3](#3--the-assignment-window--credentials-required).
 
 ---
 
@@ -204,9 +258,12 @@ Two carry the argument:
 - **the vintage landscape** — every forecast ever published for a zone, plotted
   against what it forecasts, with the `T − 24h` frontier drawn through it;
 - **the cost of hindsight** — relax one predicate to take the latest vintage
-  instead of the as-of one, and ERCOT's own model scores **1.13%** instead of
-  **2.92%**. Nothing errors, no row goes missing, every chart still renders. The
-  model just looks 2.6× better than it was at decision time.
+  instead of the as-of one, and ERCOT's own model scores **1.08%** instead of
+  **3.39%**. Nothing errors, no row goes missing, every chart still renders. The
+  model just looks **3.1× better** than it was at decision time.
 
 That second number is the exercise in one figure: the failure mode is not a
 crash, it is a plausible number.
+
+Both figures are generated, not typed — `scripts/evidence.py §6` over the
+assignment window prints them.

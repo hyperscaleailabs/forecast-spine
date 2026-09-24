@@ -10,6 +10,7 @@ changes the memo.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import itertools
 import sys
@@ -22,7 +23,35 @@ from forecast_spine import ercot, gates, pipeline, seasonal_naive
 
 RAW = Path("data/raw")
 SQL = Path("sql/asof_join.sql")
-PROCESSING_DATE = dt.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else dt.date(2026, 9, 23)
+
+
+def _args():
+    """Processing date, and optionally an explicit evaluation window.
+
+    Without a window this evaluates the trailing `window_days` operating days,
+    which is the right default for the rolling MIS path. The assignment names a
+    range instead, so the figures quoted in README.md and MEMO.md come from:
+
+        uv run python scripts/evidence.py 2026-03-24 \
+            --window-start 2026-02-22 --window-end 2026-03-23
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("processing_date", nargs="?", default="2026-09-23",
+                        help="YYYY-MM-DD; the date the run pretends it is.")
+    parser.add_argument("--window-start", default=None, help="First operating day to evaluate.")
+    parser.add_argument("--window-end", default=None, help="Last operating day to evaluate.")
+    parsed = parser.parse_args()
+    def as_date(value):
+        return dt.date.fromisoformat(value) if value else None
+
+    return (
+        as_date(parsed.processing_date),
+        as_date(parsed.window_start),
+        as_date(parsed.window_end),
+    )
+
+
+PROCESSING_DATE, WINDOW_START, WINDOW_END = _args()
 
 
 def heading(text: str) -> None:
@@ -51,7 +80,9 @@ def main() -> None:
         )
 
     started = time.monotonic()
-    context = pipeline.build_context(PROCESSING_DATE, RAW)
+    context = pipeline.build_context(
+        PROCESSING_DATE, RAW, window_start=WINDOW_START, window_end=WINDOW_END
+    )
     connection = pipeline.connect(":memory:")
     pipeline.load(connection, context)
     rows = pipeline.build_evaluation_dataset(connection, context, SQL)
@@ -139,7 +170,31 @@ def main() -> None:
         f"    full rebuild from local files: {elapsed:.1f}s"
     )
 
-    heading("6. Gate verdicts and metrics")
+    heading("6. The cost of hindsight")
+    asof_wape, hindsight_wape = connection.execute(
+        """
+        WITH latest AS (
+            SELECT weather_zone, target_ts_utc, forecast_mw,
+                   row_number() OVER (PARTITION BY weather_zone, target_ts_utc
+                                      ORDER BY publication_ts_utc DESC) AS rn
+            FROM forecast_vintage
+            WHERE is_ercot_model_in_use AND weather_zone <> 'SYSTEM_TOTAL'
+        )
+        SELECT 100 * sum(abs(e.ercot_error_mw)) / sum(e.actual_mw),
+               100 * sum(abs(l.forecast_mw - e.actual_mw)) / sum(e.actual_mw)
+        FROM evaluation_dataset e
+        JOIN latest l USING (weather_zone, target_ts_utc)
+        WHERE l.rn = 1 AND e.ercot_forecast_mw IS NOT NULL
+        """
+    ).fetchone()
+    print(
+        f"ERCOT in-use model, as-of (publication <= T-24h): {asof_wape:.2f}% WAPE\n"
+        f"ERCOT in-use model, latest vintage available now: {hindsight_wape:.2f}% WAPE\n"
+        f"    relaxing one predicate flatters the model {asof_wape / hindsight_wape:.1f}x; "
+        f"nothing errors and no row goes missing"
+    )
+
+    heading("7. Gate verdicts and metrics")
     model = gates.seasonal_naive_gate(connection, context)
     print(f"data_readiness: {readiness.status}")
     print(f"seasonal_naive: {model.status}")
