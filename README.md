@@ -178,7 +178,19 @@ scripts/
     lab.sh                    install deps and open the notebook
     evidence.py               regenerates every factual claim in MEMO.md
     retrieval_report.py       regenerates RETRIEVAL.md
+notebooks/
+    exploration.ipynb         the walkthrough, organised as Part 0-4
+    playbook_0_acquisition.ipynb   \
+    playbook_1_asof_join.ipynb      |  one per stage: what it guarantees,
+    playbook_2_pipeline.ipynb       |  what breaks, and what running it in
+    playbook_3_gates.ipynb          |  production would require
+    playbook_4_operations.ipynb    /
 ```
+
+`notebooks/exploration.ipynb` is the narrative; the five playbooks are
+operational and are described in [`notebooks/README.md`](notebooks/README.md).
+Every notebook builds a scratch warehouse under a temporary directory, so none
+of them blocks — or is blocked by — a SQL client holding `data/warehouse/`.
 
 `data/raw/` (immutable vintages), `data/warehouse/` and `data/reports/` are
 gitignored; the pipeline rebuilds them.

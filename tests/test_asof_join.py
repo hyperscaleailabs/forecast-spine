@@ -186,3 +186,36 @@ def test_cutoff_is_per_target_hour_not_a_single_run_timestamp(warehouse):
     rows = {row["hour_ending"]: row for row in asof_rows(warehouse, context(**WINDOW))}
     assert rows[2]["ercot_forecast_mw"] is None
     assert rows[23]["ercot_forecast_mw"] == 1111.0
+
+
+def test_the_standalone_copy_has_not_drifted_from_the_query_it_copies():
+    """`sql/asof_join_standalone.sql` must stay a literal copy of the real one.
+
+    The standalone file exists so the join can be run in a SQL client, which
+    cannot bind the $parameters the pipeline passes. That convenience buys a
+    second copy of the cutoff predicate -- precisely the duplication this
+    repository argues against everywhere else. The duplication is tolerable
+    only while it is mechanical, so this asserts it: the two files may differ
+    in their header and their `params` CTE, and nowhere after that.
+
+    If this fails, regenerate the standalone copy rather than hand-patching it.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    marker = "-- Every target hour we intend to judge, taken from the actuals we hold."
+
+    authoritative = (root / "sql" / "asof_join.sql").read_text()
+    standalone = (root / "sql" / "asof_join_standalone.sql").read_text()
+
+    assert marker in authoritative, "the authoritative query lost its `targets` CTE comment"
+    assert marker in standalone, "the standalone copy lost its `targets` CTE comment"
+
+    assert standalone[standalone.index(marker):] == authoritative[authoritative.index(marker):], (
+        "sql/asof_join_standalone.sql has drifted from sql/asof_join.sql below the "
+        "params CTE; regenerate it instead of editing it by hand"
+    )
+
+    # The one sanctioned difference: no $binds survive in the standalone copy.
+    head = standalone[: standalone.index(marker)]
+    assert "$" not in head, "the standalone copy still carries a $parameter it cannot bind"
