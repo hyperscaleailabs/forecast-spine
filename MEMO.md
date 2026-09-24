@@ -112,9 +112,9 @@ so both outcomes are reachable.
 
 ## Time and AI use
 
-Approximate time spent: **_[fill in before sending]_**. AI (Claude) was used
-throughout — drafts of the SQL and normalization, the notebooks and prose, and
-as a reviewer of my own claims.
+Approximate time spent: **~4 hours**. AI (Claude) was used throughout — drafts
+of the SQL and normalization, the notebooks and prose, and as a reviewer of my
+own claims.
 
 One thing it got wrong that I caught: it asserted the error sign convention was
 already documented in `asof_join.sql`'s header. It was not — only the arithmetic
