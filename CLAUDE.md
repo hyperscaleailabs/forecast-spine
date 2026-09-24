@@ -93,5 +93,7 @@ equivalent.
    has a cutoff of 2026-02-21 00:00, publications post at HH:30, so the earliest
    the permitted window allows is 30 minutes too late. That is structural, not a
    defect — report it rather than widening the window.
-3. Fill `MEMO.md` §0 and add the spring-forward results from generated output.
+3. `MEMO.md` is the concise two-page memo (all Part 4 bullets);
+   `MEMO-long.md` keeps the measurement detail. Regenerate figures with
+   `scripts/evidence.py <date> --window-start .. --window-end ..`.
 4. Re-execute the notebook against the March window.

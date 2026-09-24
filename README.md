@@ -152,6 +152,9 @@ ERCOT MIS listing (no credentials)   ERCOT Public API archive (credentials)
                               APPROVED, exit 0
 ```
 
+The error columns use **`error = forecast − actual`**, so a positive error is an
+over-forecast.
+
 Three selections run against three different clocks. The forecast and the
 seasonal-naive *input* are as-of `T − 24h`; the reported actual is as-of the
 processing date, because truth is only known after the hour. The cutoff is per
@@ -170,7 +173,7 @@ deadlines 21 hours apart.
 | Revised after publication | yes — 99.7% of target zone-hours | never observed |
 
 MIS filename timestamps are **America/Chicago**, confirmed against every
-vintage held rather than assumed — see [`MEMO.md` §1](MEMO.md). The two reports
+vintage held rather than assumed — see [`MEMO-long.md` §1](MEMO-long.md). The two reports
 order `SOUTHERN` and `SOUTH_CENTRAL` oppositely, so zones are mapped by name
 and headers are fingerprinted per file.
 

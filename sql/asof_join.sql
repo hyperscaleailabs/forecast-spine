@@ -16,6 +16,10 @@
 -- to a single "as of yesterday" timestamp is the most common way this goes
 -- quietly wrong.
 --
+-- Sign convention: error = forecast - actual. A positive error is an
+-- over-forecast; a negative error means load came in above what was predicted.
+-- This applies to both ercot_error_mw and naive_error_mw.
+--
 -- Ties are never broken arbitrarily. Where two rows survive at the same
 -- winning publication timestamp with different values, the row is emitted
 -- with value_count > 1 and the readiness gate refuses the release.

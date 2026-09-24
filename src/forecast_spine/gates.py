@@ -84,13 +84,22 @@ class Thresholds:
     """Operational assumptions for this exercise, not tuned numbers.
 
     They were chosen before looking for a passing configuration and are
-    justified in `MEMO.md`; the observed seasonal-naive WAPE is 6.35%, so
-    `max_wape_pct = 8.0` leaves deliberate but not generous headroom.
+    justified in `MEMO.md`. `max_wape_pct = 8.0` was set against the September
+    window, where seasonal-naive scored 6.35% -- deliberate but not generous
+    headroom *for that window*.
+
+    On the assignment window (Feb-Mar 2026) seasonal-naive scores 8.65% and all
+    three model limits trip. That is left as-is on purpose: the thresholds were
+    fixed before the March data existed, which is the only property that makes a
+    threshold mean anything, and re-fitting after observing the failure would be
+    fitting the gate to the answer. A seasonality-aware limit derived from a
+    rolling per-month baseline is the real correction, and is not built.
     """
 
     # NP3-565 publishes hourly, so the newest forecast publishable by a
-    # T-24h cutoff should be under an hour old. Anything materially older
-    # means our acquisition missed vintages, not that ERCOT was late.
+    # T-24h cutoff should be under an hour old. Anything materially older means
+    # vintages are missing -- ours or ERCOT's. On this window it was ERCOT's:
+    # the archive lists 19 publications for 2026-03-06 and we hold all 19.
     max_forecast_vintage_age_hours: float = 2.0
     max_wape_pct: float = 8.0
     # No single operating day may be much worse than the window as a whole.
@@ -298,7 +307,9 @@ def data_readiness(
                 f"{stale[0]} target zone-hours whose newest publishable forecast was up to "
                 f"{stale[1]:.1f}h old at its cutoff (limit "
                 f"{thresholds.max_forecast_vintage_age_hours}h). NP3-565 publishes hourly, so "
-                f"this indicates missed acquisition rather than a late ERCOT publication",
+                f"this means vintages are absent -- either our acquisition missed them or "
+                f"ERCOT never posted them. `scripts/retrieval_report.py --verify` "
+                f"distinguishes the two by asking the archive listing",
                 _sample(
                     con,
                     f"""SELECT weather_zone, strftime(target_ts_utc, '%Y-%m-%dT%H:%MZ'),
